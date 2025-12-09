@@ -1,0 +1,16 @@
+!/.idea/runConfigurations
+!/.idea/runConfigurations/*
+.DS_Store
+.cache/
+.idea/
+.tmp/
+data/
+data/conf/
+data/output/
+dist/
+gip
+node/
+node_modules/
+package-lock.json
+temp/
+tmp/
