@@ -1,10 +1,6 @@
-!/.idea/runConfigurations
-!/.idea/runConfigurations/*
 .DS_Store
 .cache/
-.idea/
 .tmp/
-data/
 data/conf/
 data/output/
 dist/

@@ -1,0 +1,54 @@
+{
+    "name": "gip",
+    "version": "2.0.0",
+    "description": "Given a username, GIP will crawl through their repositories grabbing all issues and outputting them as PDFs.",
+    "type": "module",
+    "main": "index.js",
+    "scripts": {
+        "reinstall-unix": "npm run uninstall-unix & npm install",
+        "start": "node index.js",
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "uninstall-unix": "rm -f package-lock.json && rm -rf node_modules",
+        "clean:dist": "rm -rf dist && mkdir dist && rm -f gip",
+        "bundle": "npm run clean:dist && esbuild index.js --bundle --platform=node --target=es2022 --format=cjs --external:typescript --outfile=dist/index.bundle.js",
+        "build:sea": "npm run bundle && GIP_SEA_BUILD=true node --experimental-sea-config sea-config.json --build-snapshot && mv sea-prep.blob dist/sea-prep.blob",
+        "sea": "rm -f gip && cp node/node-v24.11.1-darwin-arm64/bin/node gip && codesign --remove-signature gip 2>/dev/null || true && npx postject gip NODE_SEA_BLOB dist/sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 --macho-segment-name NODE_SEA --overwrite && codesign --sign - gip --force",
+        "build": "npm run build:sea && npm run sea && npm run fix-macos",
+        "install-chrome": "npx puppeteer browsers install chrome",
+        "fix-macos": "xattr -d com.apple.quarantine gip"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/bpsbits-org/gip.git"
+    },
+    "keywords": [
+        "github",
+        "issues",
+        "spider",
+        "crawler",
+        "tickets",
+        "problems",
+        "pdf",
+        "export",
+        "puppeteer"
+    ],
+    "author": "BPSBits & Alex Valencia",
+    "license": "MIT",
+    "bugs": {
+        "url": "https://github.com/bpsbits-org/gip/issues"
+    },
+    "homepage": "https://github.com/bpsbits-org/gip#readme",
+    "dependencies": {
+        "@octokit/rest": "^22.0.1",
+        "async": "^3.2.6",
+        "chalk": "^5.6.2",
+        "inquirer": "^4.0.2",
+        "puppeteer": "^24.32.1"
+    },
+    "devDependencies": {
+        "esbuild": "^0.27.1",
+        "postject": "^1.0.0-alpha.6",
+        "proxy-agent": "^6.5.0",
+        "semver": "^7.7.3"
+    }
+}
