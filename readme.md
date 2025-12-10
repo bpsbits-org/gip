@@ -4,6 +4,10 @@ This project is a modernized fork of [github-issues-to-pdf](https://github.com/a
 
 Many thanks to [Alexander Valencia](https://github.com/alexandervalencia) for the original work and inspiration!
 
+One of the most significant improvements over the original version is **full support for private repositories**. The application now detects whether a repository is public or private. For private repositories, it fetches the required data, renders custom HTML, and exports it directly to PDF. For public repositories, it continues to use GitHub’s officially generated HTML.
+
+An additional advantage of forked version is the structured storage of generated files, which greatly simplifies organization, archiving, and subsequent use.
+
 ## Binary version (macOS)
 
 A standalone executable version (no Node.js installation required) can be downloaded from the releases section.
