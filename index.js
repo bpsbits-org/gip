@@ -3,6 +3,7 @@ import async from 'async';
 import chalk from 'chalk';
 import fs from 'node:fs';
 import {Octokit} from '@octokit/rest';
+import {HTMLGenerator} from "./HTMLGenerator.js";
 
 /**
  * GitHub Issues to PDF.
@@ -11,51 +12,16 @@ import {Octokit} from '@octokit/rest';
 class GIP {
 
     /**
-     * @type {Octokit|null}
-     */
-    static #_gitHub = null;
-
-    static #_pathOutput = null;
-
-    /**
-     * Helper to dynamically import inquirer, avoiding global side effects on load.
-     * @returns {Promise<import('inquirer').Inquirer>}
-     */
-    static async #getInquirer() {
-        return (await import('inquirer')).default;
-    }
-
-    /**
-     *
-     * @return {Octokit|null}
-     */
-    static get gitHub() {
-        return GIP.#_gitHub;
-    }
-
-    static get pathOutput() {
-        return GIP.#_gitHub;
-    }
-
-    /**
-     * Sets a new {Octokit} instance.
-     * @param token {string}
-     */
-    static setGitHub(token) {
-        GIP.#_gitHub = new Octokit({auth: token, userAgent: GIP.conf.agent});
-    }
-
-    /**
      * Configuration.
      * @type {GipConf}
      */
     static conf = {
-        dirOutput: './data/output',
-        fileToken: './data/conf/token.json',
+        dirOutput: 'data/output',
+        fileToken: 'data/conf/ght.json',
         rgx: {
             fileDate: /^(\d{4})(-(\d{2}))(-(\d{2}))/gm,
             issueYear: /^(\d{4})/gm,
-            token: /([a-zA-Z0-9]{40})+/g,
+            token: /([a-zA-Z0-9_]{40})+/g,
             year: /^(\d{4})$/,
         },
         choice: {
@@ -76,11 +42,138 @@ class GIP {
     };
 
     /**
+     * @type {Octokit|null}
+     */
+    static #_gitHub = null;
+
+    static #_pathOutput = null;
+
+    /**
+     * Determines the application run mode.
+     * @type {boolean}
+     */
+    static #_isPortable = false;
+
+    /**
+     * Cache for repository private state
+     * @type {Map<string, boolean>}
+     */
+    static #_repoPrivateCache = new Map();
+
+    /**
+     * GitHub Token
+     * @type {GHToken|null}
+     */
+    static #_gitHubToken = null;
+
+    /**
+     * @return {boolean}
+     */
+    static get isPortableMode() {
+        return GIP.#_isPortable;
+    }
+
+    /**
+     * Helper to dynamically import inquirer, avoiding global side effects on a load.
+     * @returns {Promise<import('inquirer').Inquirer>}
+     */
+    static async #_getInquirer() {
+        return (await import('inquirer')).default;
+    }
+
+    /**
+     *
+     * @return {Octokit|null}
+     */
+    static get gitHub() {
+        return GIP.#_gitHub;
+    }
+
+    static get pathOutput() {
+        return GIP.#_gitHub;
+    }
+
+    /**
+     * Fetches repository info to determine if it's private
+     * Uses cache to avoid redundant API calls
+     * @param owner {string}
+     * @param repo {string}
+     * @return {Promise<boolean>}
+     */
+    static async isRepoPrivate(owner, repo) {
+        const cacheKey = `${owner}/${repo}`;
+        // Check if we already have this repo's status cached
+        if (GIP.#_repoPrivateCache.has(cacheKey)) {
+            return GIP.#_repoPrivateCache.get(cacheKey);
+        }
+        // Fetch from API and cache the result
+        try {
+            const repoData = await GIP.gitHub?.rest.repos.get({owner, repo});
+            const isPrivate = repoData.data.private;
+            GIP.#_repoPrivateCache.set(cacheKey, isPrivate);
+            return isPrivate;
+        } catch (error) {
+            console.error(error);
+            // Cache the false result to avoid repeated failed requests
+            GIP.#_repoPrivateCache.set(cacheKey, false);
+            return false;
+        }
+    }
+
+    /**
+     * Sets a new {Octokit} instance.
+     * @param token {string}
+     */
+    static setGitHub(token) {
+        GIP.#_gitHub = new Octokit({auth: token, userAgent: GIP.conf.agent});
+    }
+
+    /**
+     * Path of the current project.
+     * @return {string}
+     */
+    static get pathModule() {
+        return typeof __dirname !== 'undefined' ? __dirname : process.cwd();
+    }
+
+    /**
+     * Path of user home directory.
+     * @return {string}
+     */
+    static get pathUserHome() {
+        return process.env.HOME || process.env.USERPROFILE;
+    }
+
+    /**
+     * Root path.
+     * @return {string|*}
+     */
+    static get pathRoot() {
+        return GIP.isPortableMode ? `${GIP.pathUserHome}/gip-storage` : GIP.pathModule;
+    }
+
+    /**
+     * Path of a token file.
+     * @return {string}
+     */
+    static get pathToken() {
+        return `${GIP.pathRoot}/${GIP.conf.fileToken}`;
+    }
+
+    /**
+     * Path of output directory.
+     * @return {string}
+     */
+    static get pathOutputDir() {
+        return `${GIP.pathRoot}/${GIP.conf.dirOutput}`;
+    }
+
+    /**
      * Checks that the token is previously stored.
      * @return {boolean}
      */
     static get isTokenStored() {
-        return fs.existsSync(GIP.conf.fileToken);
+        return fs.existsSync(GIP.pathToken);
     }
 
     /**
@@ -95,10 +188,11 @@ class GIP {
                 return (value.match(GIP.conf.rgx.token)) ? true : 'Invalid input for GitHub access token.';
             }
         }
-        const inquirer = await GIP.#getInquirer();
+        const inquirer = await GIP.#_getInquirer();
         return inquirer.prompt([question])
             .then((answer) => {
-                fs.writeFileSync(GIP.conf.fileToken, JSON.stringify(answer));
+                fs.mkdirSync(GIP.pathToken.substring(0, GIP.pathToken.lastIndexOf('/')), {recursive: true});
+                fs.writeFileSync(GIP.pathToken, JSON.stringify(answer));
                 return answer;
             });
     }
@@ -108,7 +202,9 @@ class GIP {
      * @return {GHToken}
      */
     static readTokenFromFile() {
-        return JSON.parse(fs.readFileSync(GIP.conf.fileToken, 'utf-8'));
+        if (GIP.#_gitHubToken) return GIP.#_gitHubToken
+        GIP.#_gitHubToken = JSON.parse(fs.readFileSync(GIP.pathToken, 'utf-8'));
+        return GIP.#_gitHubToken;
     }
 
     /**
@@ -117,7 +213,7 @@ class GIP {
      */
     static makeMainOutputDirIfNeeded(cnf) {
         if (!GIP.pathOutput) {
-            GIP.#_pathOutput = `${GIP.conf.dirOutput}/${cnf.accountInfo.accountName}`;
+            GIP.#_pathOutput = `${GIP.pathOutputDir}/${cnf.accountInfo.accountName}`;
         }
         if (!fs.existsSync(GIP.#_pathOutput)) {
             fs.mkdirSync(GIP.#_pathOutput, {recursive: true});
@@ -140,12 +236,12 @@ class GIP {
         const pathDir = GIP.makeIssueOutputDirIfNeeded(issue);
         GIP.conf.rgx.fileDate.lastIndex = 0;
         const issueDate = GIP.conf.rgx.fileDate.exec(issue.created)[0];
-        const issueId = String(issue.num).padStart(4, '0');
+        const issueId = String(issue.num).padStart(5, '0');
         return `${pathDir}/${issueDate}.#${issueId}.pdf`;
     }
 
     static async askAccount() {
-        const inquirer = await GIP.#getInquirer();
+        const inquirer = await GIP.#_getInquirer();
         return inquirer.prompt(
             [
                 {
@@ -156,7 +252,7 @@ class GIP {
                 },
                 {
                     filter: (answer) => {
-                        return answer.toLowerCase();
+                        return answer.trim();
                     },
                     message: 'Please enter the name of the account you would like to query (required):',
                     name: 'accountName',
@@ -173,7 +269,7 @@ class GIP {
                 },
                 {
                     filter: (answer) => {
-                        return answer.toLowerCase();
+                        return answer.trim();
                     },
                     message: 'Please enter the name of the specific repository you want:',
                     name: 'repoName',
@@ -198,7 +294,7 @@ class GIP {
      */
     static async askForRepos(sep, repoListForPrompt, repoArray) {
         if (!sep) sep = '';
-        const inquirer = await GIP.#getInquirer();
+        const inquirer = await GIP.#_getInquirer();
         return inquirer
             .prompt([
                 {
@@ -230,7 +326,7 @@ class GIP {
      * @return {Promise<GHIssueYear>}
      */
     static async askForYear() {
-        const inquirer = await GIP.#getInquirer();
+        const inquirer = await GIP.#_getInquirer();
         return inquirer.prompt(
             [
                 {
@@ -264,22 +360,75 @@ class GIP {
      * @param issue {GHIssueInfo}
      * @return {Promise<void>}
      */
-    static async generatePDF(issue) {
-        if (issue) {
+    static async pdfFromPublicIssue(issue) {
+        if (!issue) {
+            process.stdout.write(`\n${chalk.yellow('No issues found in')} ${chalk.cyan('[')}${chalk.cyan(issue.repo)}${chalk.cyan(']')}.\n\n`);
+            return;
+        }
+        const puppeteer = (await import('puppeteer')).default;
+        const browser = await puppeteer.launch();
+        const page = await browser.newPage()
+        const ghHref = GIP.makeGHHref(issue);
+        // noinspection SpellCheckingInspection
+        await page.goto(ghHref, {waitUntil: 'domcontentloaded'});
+        const pdfFilePath = GIP.makePdfFilePath(issue);
+        const options = /** @type {PDFOptions} */ ({...GIP.conf.pdfOptions, path: pdfFilePath});
+        await page.pdf(options);
+        await browser.close();
+        process.stdout.write(`\t${chalk.yellow('PDF stored at')} ${chalk.green(pdfFilePath)}${chalk.yellow('.')}\n`);
+    }
+
+    static async pdfFromPrivateIssue(issue) {
+        if (!issue) {
+            process.stdout.write(`\n${chalk.yellow('No issues found in')} ${chalk.cyan('[')}${chalk.cyan(issue.repo)}${chalk.cyan(']')}.\n\n`);
+            return;
+        }
+        try {
             const puppeteer = (await import('puppeteer')).default;
+            // Fetch issue data using an authenticated API
+            const issueData = await GIP.gitHub?.rest.issues.get({
+                owner: issue.owner,
+                repo: issue.repo,
+                issue_number: issue.num
+            });
+            // Fetch comments
+            const commentsData = await GIP.gitHub?.rest.issues.listComments({
+                owner: issue.owner,
+                repo: issue.repo,
+                issue_number: issue.num,
+                per_page: 100
+            });
+            // Generate HTML using HTMLGenerator
+            const html = await HTMLGenerator.generate(issueData.data, commentsData.data);
+            // Create PDF
             const browser = await puppeteer.launch();
-            const page = await browser.newPage()
-            const ghHref = GIP.makeGHHref(issue);
+            const page = await browser.newPage();
             // noinspection SpellCheckingInspection
-            await page.goto(ghHref, {waitUntil: 'networkidle2'});
+            await page.setContent(html, {waitUntil: 'domcontentloaded'});
             const filePath = GIP.makePdfFilePath(issue);
             const options = /** @type {PDFOptions} */ ({...GIP.conf.pdfOptions, path: filePath});
+            options.scale = 1;
             await page.pdf(options);
             await browser.close();
             process.stdout.write(`\t${chalk.yellow('PDF stored at')} ${chalk.green(filePath)}${chalk.yellow('.')}\n`);
-        } else {
-            process.stdout.write(`\n${chalk.yellow('No issues found in')} ${chalk.cyan('[')}${chalk.cyan(issue.repo)}${chalk.cyan(']')}.\n\n`);
+        } catch (error) {
+            process.stdout.write(`\t${chalk.red('Error generating PDF:')} ${error.message}\n`);
         }
+    }
+
+    /**
+     * Generates a PDF version of a given issue.
+     * @param issue {GHIssueInfo}
+     * @return {Promise<void>}
+     */
+    static async generatePDF(issue) {
+        if (!issue) {
+            process.stdout.write(`\n${chalk.yellow('No issues found in')} ${chalk.cyan('[')}${chalk.cyan(issue.repo)}${chalk.cyan(']')}.\n\n`);
+            return;
+        }
+        const isPrivateRepo = await GIP.isRepoPrivate(issue.owner, issue.repo);
+        if (isPrivateRepo) return GIP.pdfFromPrivateIssue(issue);
+        return GIP.pdfFromPublicIssue(issue);
     }
 
     static filterByYear(issues, year, datedIssues) {
@@ -297,12 +446,12 @@ class GIP {
 
     static printFetchingRepo(repoName, count) {
         if (count >= 1) {
-            process.stdout.write(`\n${chalk.yellow('Fetching issues from repo')} ${chalk.cyan(repoName)}${chalk.yellow('...')}\n`);
+            process.stdout.write(`\n${chalk.yellow('Fetching')} ${chalk.white(count)} ${chalk.yellow('issues from repo')} ${chalk.cyan(repoName)}${chalk.yellow('...')}\n`);
         }
     }
 
     /**
-     *
+     * Processes single repo.
      * @param cnf {GHConf}
      */
     static processRepo(cnf) {
@@ -402,9 +551,10 @@ class GIP {
      * @param config {GHConf}
      */
     static fetchOrgIssues(config) {
-        const collectedIssues = [];
-        GIP.fetchOrgRepos(config, [],
-            (repos) => {
+        const collectedRepos = [];
+        GIP.fetchOrgRepos(config, collectedRepos, (repos) => {
+                console.dir(repos);
+                const collectedIssues = [];
                 async.eachSeries(repos, (repo, callback) => {
                         config.page = 1;
                         GIP.fetchIssues(config, repo.name, [], (issues) => {
@@ -489,12 +639,8 @@ class GIP {
         process.stdout.write(`\n${chalk.yellow('Processing repos from')} ${chalk.cyan(cnf.accountInfo.accountName)}${chalk.yellow('...')}\n\n`);
         GIP.makeMainOutputDirIfNeeded(cnf);
         GIP.setGitHub(cnf.token.id);
-        if ((cnf.accountInfo.accountType === 'organization') && (cnf.accountInfo.howManyRepos === 'all')) {
-            return GIP.fetchOrgIssues(cnf);
-        }
-        if ((cnf.accountInfo.accountType === 'user') && (cnf.accountInfo.howManyRepos === 'all')) {
-            return GIP.fetchUserIssues(cnf);
-        }
+        if ((cnf.accountInfo.accountType === 'organization') && (cnf.accountInfo.howManyRepos === 'all')) return GIP.fetchOrgIssues(cnf);
+        if ((cnf.accountInfo.accountType === 'user') && (cnf.accountInfo.howManyRepos === 'all')) return GIP.fetchUserIssues(cnf);
         if (cnf.accountInfo.howManyRepos === 'multiple') return GIP.fetchIssuesFromMultipleRepos(cnf);
         GIP.processRepo(cnf);
     }
@@ -518,7 +664,7 @@ class GIP {
      * Starts application
      */
     static run() {
-        process.on('exit', (code) => {
+        process.on('exit', (_) => {
             process.stdout.write(`\n${chalk.green('Done.')}\n`);
         });
         (async () => {
@@ -528,22 +674,32 @@ class GIP {
         })();
     }
 
-}
+    static runPortable() {
+        process.stdout.write(`${chalk.white('GIP (Portable)')}\n`);
+        GIP.#_isPortable = true;
+        GIP.run();
+    }
 
+    static runNode() {
+        process.stdout.write(`${chalk.white('GIP (Node)')}\n`);
+        GIP.run();
+    }
+
+}
 
 /**
  * Run application
  */
 if (process.env.GIP_SEA_BUILD === 'true') {
     try {
-        const v8 = require('v8');
+        const v8 = require('node:v8');
         v8.startupSnapshot.setDeserializeMainFunction(() => {
-            GIP.run();
+            GIP.runPortable();
         });
     } catch (e) {
-        console.error("Could not set up snapshot deserialization:", e);
+        console.error(chalk.red('Could not set up snapshot deserialization:'), e);
         process.exit(1);
     }
 } else {
-    GIP.run();
+    GIP.runNode();
 }
