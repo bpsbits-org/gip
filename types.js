@@ -62,9 +62,10 @@
 
 /**
  * @typedef {Object} GHIssueInfo
- * @property closed {boolean|null}
+ * @property closed {string|null}
  * @property created {string}
  * @property num {number}
  * @property owner {string}
  * @property repo {string}
+ * @property isPrivate {boolean}
  */
